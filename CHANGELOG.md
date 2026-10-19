@@ -12,44 +12,43 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Local connection to Satel INTEGRA panels through the ETHM-1 / ETHM-1 Plus
+  module over TCP (port 7094), with the protocol of satel-integra 1.5.0:
+  frames, checksum, "Busy" check, monitoring, keep-alive, names of the
+  partitions, zones and outputs read from the panel.
+- ETHM-1 Plus integration key (AES layer of satel-integra), as a secret
+  field.
+- One device per configured partition: read-only state (disarmed, arming,
+  armed away, armed stay), armed, alarm, fire alarm, and arm away / arm stay
+  / disarm push buttons (never a switch); the INTEGRA mode of "arm stay" is
+  configurable (1, 2 or 3).
+- One device per configured zone: violated (opening, motion, smoke or leak),
+  tamper, alarm.
+- One device per configured output: state, and turn on / turn off push
+  buttons.
+- The panel: link, trouble, service mode.
+- Scene triggers `alarm_triggered` (zone, fire), `armed`, `disarmed`; scene
+  actions `arm` and `disarm`; a "Test the connection" button.
+- State and scene event budgets under the Gladys limits.
+- French and English names, messages and guides.
 
-### Changed
+### Security
 
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
+- Disarming and the outputs are off by default, each behind its own option;
+  arming has its own option too. The options are read when the command is
+  asked, again after the fresh read, and once more right before the write.
+- Every command decided on the lists read from the panel just before it,
+  one at a time, sent within 3.5 s or not at all; a command that may have
+  left is reported "sent, without confirmation" and read again; after a
+  command timed out, a result is treated as ambiguous for 10 s.
+- A user code refused by the panel stops the commands, kept across restarts
+  in `/data` (the address only, never the code); lifted by a new code or by
+  "Test the connection". The user code and the integration key are never
+  logged.
+- One TCP connection only (the module takes one client), at least 5 s
+  between two, spaced reconnections (10 s to 5 min, at least 60 s after
+  "Busy"); bounded frames and PDUs, linear parsing.
+- Docs and configuration: without an integration key the traffic, user code
+  included, travels in clear text on the local network.
 
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-satel-integra/commits/main

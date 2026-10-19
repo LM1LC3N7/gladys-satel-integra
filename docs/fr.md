@@ -1,67 +1,163 @@
-# Template de démonstration
+# Satel Integra (ETHM-1) pour Gladys
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Cette intégration relie une centrale d'alarme **Satel INTEGRA** (ou INTEGRA
+Plus) à Gladys Assistant, **en local** sur votre réseau, par son module
+**ETHM-1** ou **ETHM-1 Plus** et le protocole d'intégration publié par Satel.
+
+> **Jamais testé avec un vrai appareil.** Le protocole vient de la
+> bibliothèque [satel-integra](https://github.com/c-soft/satel_integra)
+> 1.5.0 (celle de l'intégration Satel Integra de Home Assistant), portée en
+> JavaScript et vérifiée seulement contre un module simulé. Faites vos
+> premiers essais en présence, centrale désarmée, et signalez ce qui ne va
+> pas.
+>
+> Intégration non officielle, sans lien avec SATEL.
+
+## Avant de commencer
+
+- Un module **ETHM-1** ou **ETHM-1 Plus** relié à la centrale, joignable
+  depuis Gladys (donnez-lui une adresse fixe dans votre box).
+- Dans DLOADX (par votre installateur) : **l'intégration activée** sur le
+  module, son port (7094 par défaut) et, sur un ETHM-1 Plus, la **clé
+  d'intégration** éventuelle.
+- **Le module n'accepte qu'un seul client d'intégration à la fois** :
+  arrêtez tout autre logiciel qui s'y connecte (Home Assistant, GUARDX, un
+  autre Gladys). S'il est occupé, il répond « Busy » : l'intégration le dit
+  et réessaie au plus tôt une minute plus tard.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+- **Centrale Satel** : connectée ou non, défaut en cours, mode service.
+- **Une partition par appareil** (nom repris de la centrale) :
+  - **État** en lecture seule : désarmée, armement en cours (temporisation
+    de sortie), armée (totale), armée (partielle, modes 1 à 3) ;
+  - **Armée**, **Alarme en cours**, **Alarme incendie** ;
+  - trois **boutons** : armement total, armement partiel, désarmer.
+- **Une zone par appareil** (seulement celles que vous indiquez, nom repris
+  de la centrale) : violée ou non (ouverture, mouvement, fumée ou fuite selon
+  le type choisi), **autoprotection** (sabotage), alarme.
+- **Une sortie par appareil** (seulement celles que vous indiquez) : active
+  ou non, et deux **boutons** : activer, désactiver.
+- **Déclencheurs de scène** : alarme déclenchée (avec la zone si la centrale
+  la donne, et si c'est un incendie), partition armée (mode, demandé par
+  Gladys ou non), partition désarmée.
+- **Actions de scène** : armer (total ou partiel), désarmer.
+
+Aucune commande n'est un interrupteur : un « éteins tout » d'un assistant
+vocal, de HomeKit ou d'une scène ne peut ni désarmer l'alarme ni actionner
+une sortie. Les états sont en lecture seule, les commandes sont des boutons.
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+1. **Adresse du module ETHM-1** : son adresse IP.
+2. **Port d'intégration** : 7094, sauf changement dans DLOADX.
+3. **Clé d'intégration (ETHM-1 Plus)** : seulement si une clé est réglée sur
+   le module (12 caractères au plus). Voir « Ce qui circule sur le réseau ».
+4. **Code utilisateur** (facultatif) : le code d'un utilisateur INTEGRA
+   (4 à 16 chiffres, préfixe compris), nécessaire seulement aux commandes ;
+   les états n'en ont pas besoin. Créez un utilisateur dédié, avec seulement
+   les partitions et les droits utiles à Gladys.
+5. **Partitions** : par exemple `1, 2` ou `1-4` (par défaut `1`).
+6. **Zones** : par exemple `1-6, 7:motion, 9:smoke, 10:leak`. Types :
+   `opening` (ouverture, par défaut), `motion` (mouvement), `smoke` (fumée),
+   `leak` (fuite d'eau). Changer le type d'une zone déjà créée dans Gladys
+   ajoute une nouvelle fonction et garde l'ancienne (et son historique) :
+   supprimez l'ancienne à la main si vous n'en voulez plus.
+7. **Sorties** (facultatif) : par exemple `3, 5-6`.
+8. **Mode INTEGRA de « armement partiel »** : 1, 2 ou 3, selon ce que votre
+   installateur a réglé (l'armement total est le mode 0).
+9. **Sécurité** : voir plus bas.
+10. **Langue des noms** : français ou anglais.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+La clé d'intégration et le code utilisateur sont des champs secrets : gardés
+par Gladys dans sa base, jamais réaffichés dans l'interface, utilisés
+seulement avec le module. Ils n'apparaissent jamais dans les journaux ni dans
+`/data`.
 
-## Actions
+Le bouton **Tester la connexion** se connecte tout de suite si aucune
+connexion n'est ouverte (sinon il attend celle en cours : le module n'accepte
+qu'un client) et indique le modèle, l'état des partitions et le nombre de
+zones et de sorties. Il n'envoie pas le code utilisateur.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Ce qui circule sur le réseau
 
-## Scènes
+- **ETHM-1, ou ETHM-1 Plus sans clé d'intégration : tout circule en clair**
+  sur votre réseau local, y compris le code utilisateur à chaque commande.
+  Tout appareil de votre réseau qui écoute le trafic peut le lire.
+- **ETHM-1 Plus avec une clé d'intégration** : les échanges sont protégés
+  par AES avec cette clé (la méthode de satel-integra). Mettez la même clé
+  des deux côtés ; si elles diffèrent, le module ne répond jamais et
+  l'intégration vous le signale.
+- Protégez votre réseau (Wi-Fi invité séparé pour les appareils dont vous
+  n'êtes pas sûr) et donnez à Gladys un utilisateur INTEGRA aux droits
+  limités.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+## Sécurité
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+- **Armer** est permis par défaut (option « Autoriser l'armement depuis
+  Gladys »), avec le code utilisateur.
+- **Désarmer est désactivé par défaut.** Une fois l'option cochée, **tout
+  utilisateur de Gladys, toute scène et l'application mobile Gladys peuvent
+  désarmer, avec le code de la configuration, sans saisir aucun code**. Ne
+  l'autorisez que si votre Gladys est bien protégé (comptes, accès à
+  distance).
+- **Les sorties sont désactivées par défaut**, derrière leur propre option :
+  une sortie peut commander une sirène, un portail ou une serrure. Vérifiez
+  d'abord ce que fait chacune.
+- Les options sont relues juste avant chaque envoi : une option décochée
+  pendant qu'une commande attend son tour bloque cette commande.
+- Avant chaque commande, l'intégration **relit l'état sur la centrale** et
+  décide sur cet état, jamais sur ce qu'elle a en mémoire (déjà dans l'état
+  demandé : rien n'est envoyé ; armée dans un autre mode : refusé, désarmez
+  d'abord). Les commandes passent une par une.
+- Une commande qui ne peut pas partir dans les temps (centrale lente, état
+  illisible) est refusée avec « rien n'a été envoyé ». Une commande partie
+  sans réponse claire (pas de réponse, réponse ambiguë, coupure) est
+  annoncée « envoyée, sans confirmation » et l'état est relu deux secondes
+  plus tard : elle n'est jamais annoncée « non envoyée ». Seule une réponse
+  de refus de la centrale est annoncée « refusée » (code refusé, droits
+  insuffisants, armement impossible…).
+- **Si la centrale refuse le code utilisateur, l'intégration ne l'envoie plus
+  jamais d'elle-même**, même après un redémarrage (une INTEGRA peut
+  déclencher une alarme ou bloquer les claviers après plusieurs codes faux).
+  Les états continuent d'arriver. Changez le code dans la configuration, ou
+  cliquez sur « Tester la connexion » pour permettre un nouvel essai à la
+  prochaine commande. Le fichier `/data/satel-state.json` garde seulement
+  l'adresse concernée, jamais le code.
+- Chaque commande, envoyée ou refusée, est écrite dans les journaux de
+  l'intégration, jamais les codes.
 
-## Tableau de bord
+## Connexion
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+- Une seule connexion à la fois, jamais deux : au moins 5 secondes entre
+  deux connexions.
+- Sur une coupure, les nouveaux essais sont espacés : 10 s, 30 s, 1 min,
+  2 min, puis toutes les 5 minutes ; au moins une minute quand le module
+  répond « Busy ».
+- Un message toutes les 15 secondes de silence garde la connexion ouverte
+  (le module coupe un client muet après 25 s) ; sans rien recevoir pendant
+  45 s, l'intégration se reconnecte.
 
-## Dépannage
+## Limites connues
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- Jamais testé avec un vrai appareil (voir plus haut).
+- Les listes « autoprotection des zones » (0x01) et « alarme des zones »
+  (0x02) viennent de la description Satel du protocole, pas de
+  satel-integra : non vérifiées.
+- Les zones et sorties au-delà de 128 (INTEGRA 256 Plus) sont demandées au
+  format 32 octets : non vérifié.
+- Les noms sont lus en Latin-1 ; les caractères propres à Satel peuvent être
+  remplacés.
+- Pas de températures de zones, pas d'effacement d'alarme séparé (0x85), pas
+  de journal d'événements dans cette version.
+- Une alarme déjà en cours au démarrage de l'intégration ne déclenche pas de
+  scène (seuls les changements vus le font).
+
+## Confidentialité
+
+Tout reste sur votre réseau : l'intégration ne parle qu'au module ETHM-1.
+
+## Licence
+
+Apache-2.0. Logique de protocole portée de satel-integra 1.5.0 (MIT,
+Krzysztof Machelski) : voir `THIRD_PARTY_NOTICES.md`.

@@ -32,17 +32,30 @@ pushing.
 
 ```
 index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
-src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
+src/handlers.js                   the SDK handlers, shared with the tests
+src/app.js                        SatelApp: lifecycle, model, devices, states, events, commands
+src/satel/frame.js                frames: checksum, FE escapes, reader, masks, code field (satel-integra utils/messages)
+src/satel/crypto.js               the AES layer of the ETHM-1 Plus (satel-integra AES module, transport)
+src/satel/protocol.js             commands, results, models, partition status (satel-integra commands/models)
+src/satel/client.js               one TCP connection: Busy check, monitoring, requests, commands
+src/devices.js                    model -> Gladys devices and states (pure)
+src/publisher.js                  states and scene events under the Gladys rate limits
+src/store.js                      /data: the stop after a refused user code
+src/config.js                     DEFAULTS (mirror the manifest defaults) + normalization
+src/constants.js, src/i18n.js     keys, timings, limits; French and English texts
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
+test/                             node --test, the SDK's fake Gladys + test/helpers/fakeSatel.js
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
 ```
+
+Safety rules of this integration (see TODO.md "Decisions"): disarming and
+the outputs stay off by default (separate options), arming has its own;
+commands are push buttons, never switches; a command decides on the lists
+read from the panel just before it, one at a time; a command that may have
+left is never reported "not sent"; a refused user code is never sent again
+by itself; the user code and the integration key are never logged; one TCP
+connection only (the ETHM-1 takes one client).
 
 ## Rules
 
