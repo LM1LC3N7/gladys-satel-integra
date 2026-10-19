@@ -167,9 +167,7 @@ up to date at the end of every milestone.
 - **M2 - uncertain line**: a count of the results still to come (a command
   timed out: +1; an ambiguous result: one consumed, one more to come; a
   result answering nothing: -1), within a 10 s window renewed by each.
-- **M3 - one command at a time, refused at once**: a command asked while
-  another is handled is refused immediately ("another command is in
-  progress", nothing sent), instead of waiting and coming too late.
+- **M3 - one command at a time** (revised in round 2, R1): see below.
 - **M4 - malformed frames**: counted; the first one of a period is logged,
   the others summed up in one line per minute; 50 in a row without a good
   frame cut the connection.
@@ -193,3 +191,17 @@ up to date at the end of every milestone.
 - **M12**: a dedicated action "Allow a new try of the code"
   (`allow_code_retry`) lifts the stop and sends nothing; "Test the
   connection" no longer lifts it.
+
+## Decisions after the approval round 1 (2026-10-19)
+
+- **R1 (regression of M3)**: Gladys runs the actions of a scene column, and
+  a "set value" on several devices, in parallel. The commands queue again,
+  one after the other in the order asked; a command is refused
+  (`commandBusy`, "other commands took all the time of this one", nothing
+  sent) only when its own readBy (asked + 2.8 s) passed while it waited. A
+  disarm withdraws an arming of the same partition that has not started
+  yet (`armWithdrawn`); one already being handled is never withdrawn.
+- **R2**: on a late 0x01 / 0x03, `lateResult` sets `memory.codeStop`
+  synchronously, then logs, persists and updates the status without
+  waiting for the guard chain (a slow Gladys can no longer delay the stop).
+- Any answer, a short read's included, resets the timeout count.

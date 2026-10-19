@@ -99,7 +99,8 @@ export class SatelApp {
     this.modelPlace = undefined;
     /** { code, at }: the last command frame written with a user code (memory only). */
     this.sentWithCode = undefined;
-    this.pendingCommands = 0;
+    /** Commands waiting their turn (not started yet). */
+    this.waiting = new Set();
     this.commands = Promise.resolve();
     this.starting = Promise.resolve();
     // Every model change is applied when the client emits it, in the order of
@@ -332,7 +333,17 @@ export class SatelApp {
       sent.code === this.config.code &&
       this.now() - sent.at <= TIMINGS.answerBy + TIMINGS.uncertain;
     if (!recent) return undefined;
-    return this.guard(() => this.stopOnCode('late answer'));
+    // At once, before anything queued: a command asked right now must see it.
+    if (!this.memory) this.memory = normalizeMemory(null);
+    const already = Boolean(this.memory.codeStop);
+    this.memory.codeStop = { at: this.now() };
+    if (!already) {
+      this.logger.error('Satel: the panel refused the user code (late answer): commands stopped');
+    }
+    // Persisted and told without waiting for the Gladys side of the events.
+    this.saveMemory();
+    if (this.online) this.setStatus(true, this.connectedMessage());
+    return undefined;
   }
 
   async setStatus(connected, message) {
@@ -574,24 +585,37 @@ export class SatelApp {
   // --- Commands --------------------------------------------------------------
 
   /**
-   * One command at a time; a failed one never blocks the next. A command
-   * asked while another one is being handled is refused at once (nothing
-   * sent): waiting behind it would spend its own 5 s (a disarm behind a slow
-   * arming would come too late anyway).
+   * One command at a time, in the order asked (a scene runs its actions in
+   * parallel: "arm 1" and "arm 2" both go, one after the other); a failed
+   * one never blocks the next. A command whose own time ran out while it
+   * waited its turn is refused, nothing sent (Gladys would give up on it
+   * anyway). A disarm withdraws an arming of the same partition that is
+   * still waiting (never one already being handled).
    */
-  serial(fn) {
-    if (this.pendingCommands > 0) {
-      this.logger.warn('Command REFUSED: another command is in progress');
-      return Promise.reject(this.refused(T.commandBusy));
+  serial({ asked = this.now(), partition, kind } = {}, fn) {
+    const ticket = { partition, kind, withdrawn: false };
+    if (kind === 'disarm') {
+      for (const waiting of this.waiting) {
+        if (waiting.kind === 'arm' && waiting.partition === partition) waiting.withdrawn = true;
+      }
     }
-    this.pendingCommands += 1;
-    const run = this.commands.then(fn, fn).finally(() => {
-      this.pendingCommands -= 1;
-    });
+    this.waiting.add(ticket);
+    const start = () => {
+      this.waiting.delete(ticket);
+      if (ticket.withdrawn) {
+        this.logger.warn(`Arm WITHDRAWN (partition ${partition}): a disarm was asked meanwhile`);
+        throw this.refused(T.armWithdrawn);
+      }
+      if (this.now() >= asked + TIMINGS.readBy) {
+        this.logger.warn('Command REFUSED: its time ran out behind other commands');
+        throw this.refused(T.commandBusy);
+      }
+      return fn();
+    };
+    const run = this.commands.then(start, start);
     this.commands = run.catch(() => undefined);
     return run;
   }
-
   partitionOf(value) {
     const n = Number(value);
     if (
@@ -799,7 +823,7 @@ export class SatelApp {
     const n = this.partitionOf(rawPartition);
     const what = fill(COMMAND_NAMES[mode], n);
     this.check('arm', what);
-    return this.serial(async () => {
+    return this.serial({ asked, partition: n, kind: 'arm' }, async () => {
       this.check('arm', what);
       const status = await this.freshPartition(n, asked);
       if (status.mode === mode) {
@@ -834,7 +858,7 @@ export class SatelApp {
     const n = this.partitionOf(rawPartition);
     const what = fill(COMMAND_NAMES.disarm, n);
     this.check('disarm', what);
-    return this.serial(async () => {
+    return this.serial({ asked, partition: n, kind: 'disarm' }, async () => {
       this.check('disarm', what);
       const status = await this.freshPartition(n, asked);
       if (status.mode === 'disarmed' && !status.alarm && !status.fire) {
@@ -856,7 +880,7 @@ export class SatelApp {
     const n = this.outputOf(rawOutput);
     const what = fill(COMMAND_NAMES[on ? 'turn-on' : 'turn-off'], n);
     this.check('output', what);
-    return this.serial(async () => {
+    return this.serial({ asked, partition: n, kind: 'output' }, async () => {
       this.check('output', what);
       const lists = await this.fresh([READ.OUTPUTS_STATE], asked);
       const state = member(lists, READ.OUTPUTS_STATE, n);

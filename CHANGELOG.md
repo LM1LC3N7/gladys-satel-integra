@@ -63,7 +63,10 @@ the notes of the version's GitHub Release.
   to 1 s): one `armed` event per arming, no false `armed` on a disarm.
 - After an ambiguous result the line stays uncertain until the pending
   answers came or 10 s passed.
-- A command asked while another is handled is refused at once.
+- Commands asked together (a scene arming two partitions) all go, one after
+  the other; one whose time ran out while waiting is refused with an exact
+  message, and a disarm withdraws an arming of the same partition still
+  waiting. A late refusal of the code stops the commands at once.
 - Malformed frames are logged once per minute in a summary; 50 in a row
   cut the connection. A result of a wrong length is "sent, without
   confirmation". Short reads never drop the link.

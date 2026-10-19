@@ -187,8 +187,12 @@ export const T = {
       `Envoyé à la centrale (${what}), sans confirmation dans les temps : l'état est relu dans 2 s.`,
   },
   commandBusy: {
-    en: `Another command is in progress, try again in a moment${nothing.en}`,
-    fr: `Une autre commande est en cours, réessayez dans un instant${nothing.fr}`,
+    en: `Other commands took all the time of this one before its turn came${nothing.en}`,
+    fr: `D'autres commandes ont pris tout le temps de celle-ci avant son tour${nothing.fr}`,
+  },
+  armWithdrawn: {
+    en: `A disarm of this partition was asked while this arming waited its turn${nothing.en}`,
+    fr: `Un désarmement de cette partition a été demandé pendant que cet armement attendait son tour${nothing.fr}`,
   },
   codeNotStopped: {
     en: 'The user code is not stopped: nothing to allow.',

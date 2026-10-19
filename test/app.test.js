@@ -593,16 +593,44 @@ test('M1: the window is capped: reports every 300 ms flush within about 1 s', as
   await reports;
 });
 
-test('M3 (s10): a command asked while another one is handled is refused at once', async (t) => {
+test('R1 (s11): two armings asked in parallel (one scene column) both go, in turn', async (t) => {
+  const ctx = await setup(t);
+  await up(ctx);
+  const results = await Promise.all([
+    ctx.gladys.fake.sceneAction('arm', { partition: '1', mode: 'armed_away' }),
+    ctx.gladys.fake.sceneAction('arm', { partition: '2', mode: 'armed_away' }),
+  ]);
+  assert.deepEqual(
+    results.map((r) => r.success),
+    [true, true],
+    JSON.stringify(results),
+  );
+  const acks = await Promise.all([
+    ctx.press(ctx.partition(1), 'arm-away'),
+    ctx.press(ctx.partition(2), 'arm-away'),
+  ]);
+  assert.deepEqual(
+    acks.map((a) => a.success),
+    [true, true],
+    'already armed: nothing sent, no refusal',
+  );
+  assert.deepEqual(
+    ctx.panel.commands.map((c) => [c.cmd, c.data[8]]),
+    [
+      [0x80, 1],
+      [0x80, 2],
+    ],
+  );
+});
+
+test('R1 (s10): a command whose time ran out behind another one is refused, nothing sent', async (t) => {
   const ctx = await setup(t, { config: { allow_disarm: true } });
   await up(ctx);
-  ctx.panel.hold = (cmd) => cmd === 0x80;
+  ctx.panel.hold = (cmd) => cmd === 0x80; // the arming holds the line until 4.5 s
   const arming = ctx.press(ctx.partition(1), 'arm-away');
   await sleep(200);
-  const t0 = Date.now();
-  const d = await ctx.press(ctx.partition(1), 'disarm');
-  assert.ok(Date.now() - t0 < 500, 'refused at once');
-  assert.match(d.error, /Another command is in progress.*nothing was sent/);
+  const d = await ctx.press(ctx.partition(2), 'disarm');
+  assert.match(d.error, /Other commands took all the time of this one.*nothing was sent/);
   await arming;
   assert.deepEqual(
     ctx.panel.commands.map((c) => c.cmd),
@@ -610,6 +638,46 @@ test('M3 (s10): a command asked while another one is handled is refused at once'
   );
 });
 
+test('R1: a disarm withdraws an arming of the same partition still waiting its turn', async (t) => {
+  const ctx = await setup(t, { config: { allow_disarm: true } });
+  await up(ctx);
+  let open;
+  const gate = new Promise((resolve) => (open = resolve));
+  ctx.panel.gate = (cmd) => (cmd === 0x14 ? gate : undefined);
+  const first = ctx.press(ctx.partition(2), 'arm-away'); // being handled (its fresh read waits)
+  await until(() => ctx.panel.log.some((e) => e.cmd === 0x14));
+  const queued = ctx.press(ctx.partition(1), 'arm-away'); // waiting its turn
+  await settle();
+  const disarm = ctx.press(ctx.partition(1), 'disarm');
+  ctx.panel.gate = () => undefined;
+  open();
+  const [a2, a1, d] = await Promise.all([first, queued, disarm]);
+  assert.equal(a2.success, true, a2.error);
+  assert.match(a1.error, /A disarm of this partition was asked/);
+  assert.equal(d.success, true, 'already disarmed: nothing to send');
+  assert.deepEqual(
+    ctx.panel.commands.map((c) => [c.cmd, c.data[8]]),
+    [[0x80, 2]],
+  );
+});
+
+test('R2 (s12): the late refusal stops at once, even behind a slow Gladys', async (t) => {
+  const ctx = await setup(t, { config: { user_code: '9999' } });
+  await up(ctx);
+  ctx.panel.gate = (cmd) => (cmd >= 0x80 && cmd <= 0x89 ? sleep(4_800) : undefined);
+  await ctx.press(ctx.partition(1), 'arm-away');
+  const original = ctx.gladys.publishStates.bind(ctx.gladys);
+  ctx.gladys.publishStates = async (states) => {
+    await sleep(3_000);
+    return original(states);
+  };
+  ctx.panel.set('violated', 1, true);
+  await sleep(600);
+  const a2 = await ctx.press(ctx.partition(2), 'arm-away');
+  assert.match(a2.error, /refused this user code before/);
+  assert.equal(ctx.panel.commands.length, 1, 'the refused code is not sent again');
+  await until(() => Boolean(ctx.store.data?.codeStop));
+});
 test('M7: a new configuration applies to the commands before anything is awaited', async (t) => {
   const ctx = await setup(t);
   await up(ctx);

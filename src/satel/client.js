@@ -526,7 +526,8 @@ export class SatelClient extends EventEmitter {
     if (cmd !== entry.expect && cmd !== RESULT) return;
     this.timers.clearTimeout(entry.timer);
     this.inflight = undefined;
-    if (!entry.short) this.timeouts = 0;
+    // Any answer, a short read's too, shows the link alive.
+    this.timeouts = 0;
     if (malformed) {
       entry.reject(
         new SatelError(`Unexpected answer to ${entry.label}`, 'unexpected', { sent: true }),

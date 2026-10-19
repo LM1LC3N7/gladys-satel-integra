@@ -117,9 +117,12 @@ de nouveau le code, une fois. Il n'envoie rien lui-même.
 - Avant chaque commande, l'intégration **relit l'état sur la centrale** et
   décide sur cet état, jamais sur ce qu'elle a en mémoire (déjà dans l'état
   demandé : rien n'est envoyé ; armée dans un autre mode : refusé, désarmez
-  d'abord). Les commandes passent une par une : une commande demandée pendant
-  qu'une autre est en cours est refusée tout de suite (« une autre commande
-  est en cours »), rien n'est envoyé.
+  d'abord). Les commandes passent une par une, dans l'ordre (une scène qui
+  arme deux partitions en parallèle les arme toutes les deux). Une commande
+  dont le temps s'est épuisé en attendant son tour est refusée (« d'autres
+  commandes ont pris tout le temps de celle-ci »), rien n'est envoyé. Un
+  désarmement retire un armement de la même partition qui attend encore son
+  tour.
 - Une commande qui ne peut pas partir dans les temps (centrale lente, état
   illisible) est refusée avec « rien n'a été envoyé ». Une commande partie
   sans réponse claire (pas de réponse, réponse ambiguë, coupure) est

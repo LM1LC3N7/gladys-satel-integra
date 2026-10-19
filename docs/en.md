@@ -112,9 +112,11 @@ sends nothing itself.
 - Before each command, the integration **reads the state from the panel
   again** and decides on that state, never on what it has in memory (already
   in the state asked: nothing is sent; armed in another mode: refused,
-  disarm first). Commands go one at a time: a command asked while another
-  one is in progress is refused at once ("another command is in progress"),
-  nothing is sent.
+  disarm first). Commands go one at a time, in order (a scene arming two
+  partitions in parallel arms both). A command whose time ran out while it
+  waited its turn is refused ("other commands took all the time of this
+  one"), nothing is sent. A disarm withdraws an arming of the same partition
+  still waiting its turn.
 - A command that cannot leave in time (slow panel, unreadable state) is
   refused with "nothing was sent". A command sent without a clear answer (no
   answer, an ambiguous answer, a cut) is reported "sent, without
