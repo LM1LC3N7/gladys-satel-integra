@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 // What must survive a restart, in /data (the only writable place of the
-// container): the stop after the panel refused the user code, with the
-// address it belongs to, so a restart never sends a refused code again (an
+// container): the stop after the panel refused the user code, so a restart
+// never sends a refused code again (an
 // INTEGRA may raise an alarm or lock the keypads after wrong codes). Never
 // the code itself, nor anything derived from it (a short code is brute-forced
 // from any hash). The file is readable by the container user only (0600).
@@ -53,12 +53,16 @@ export function memoryStore(initial = null) {
   };
 }
 
-/** The persisted state, repaired: { codeStop: { place, at } | null }. */
+/**
+ * The persisted state, repaired: { codeStop: { at } | null }. The stop
+ * belongs to the integration (its user code), not to an address: a new IP
+ * of the module never lifts it. Any stop found, even malformed, is kept: a
+ * doubt never sends a refused code again.
+ */
 export function normalizeMemory(raw) {
   const stop = raw?.codeStop;
-  const valid =
-    typeof stop?.place === 'string' && stop.place.length > 0 && stop.place.length <= 300;
+  const present = stop !== null && typeof stop === 'object' && !Array.isArray(stop);
   return {
-    codeStop: valid ? { place: stop.place, at: Number.isFinite(stop.at) ? stop.at : 0 } : null,
+    codeStop: present ? { at: Number.isFinite(stop.at) ? stop.at : 0 } : null,
   };
 }

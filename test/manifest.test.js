@@ -132,6 +132,22 @@ test('the configuration matches the code', () => {
   assert.equal(fields.user_code.type, 'secret', 'the code is never sent back to the browser');
   assert.equal(fields.integration_key.type, 'secret');
   assert.match(fields.integration_key.description.en, /clear text/);
+  // M10: what the texts must say.
+  assert.match(fields.user_code.description.en, /Without an integration key it travels in clear/);
+  assert.match(fields.user_code.description.fr, /circule en clair/);
+  assert.match(fields.integration_key.description.en, /replayed/);
+  assert.match(fields.integration_key.description.fr, /rejouée/);
+  assert.match(fields.allow_arm.description.en, /false alarm.*monitoring company/);
+  assert.match(fields.allow_arm.description.fr, /fausse alarme.*télésurveillance/);
+  for (const lang of ['en', 'fr']) {
+    const docs = read(`docs/${lang}.md`);
+    assert.match(docs, lang === 'en' ? /replay/ : /rejeu/, `docs/${lang}.md`);
+    assert.match(docs, lang === 'en' ? /monitoring company/ : /télésurveillance/);
+    assert.match(
+      docs,
+      lang === 'en' ? /Allow a new try of the code/ : /Autoriser un nouvel essai du code/,
+    );
+  }
   assert.deepEqual(values(fields.language), LANGUAGES);
   assert.deepEqual(values(fields.stay_mode), STAY_MODES);
   assert.equal(fields.host.required, true);

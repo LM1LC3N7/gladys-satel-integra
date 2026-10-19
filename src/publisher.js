@@ -64,6 +64,16 @@ function offset(id, spread) {
   return hash % spread;
 }
 
+/**
+ * The SDK refuses an event variable whose value is undefined (the whole
+ * event is then lost, alarm_triggered included): an unknown value is sent
+ * as null.
+ */
+export const definedValues = (data = {}) =>
+  Object.fromEntries(
+    Object.entries(data ?? {}).map(([key, value]) => [key, value === undefined ? null : value]),
+  );
+
 const valueKey = (state) => JSON.stringify([state.state ?? null, state.text ?? null]);
 
 export class StatePublisher {
@@ -212,7 +222,7 @@ export class StatePublisher {
       return;
     }
     this.events.spend(1);
-    await this.tryEvent(key, data, critical ? 1 : LIMITS.alarmEventTries);
+    await this.tryEvent(key, definedValues(data), critical ? 1 : LIMITS.alarmEventTries);
   }
 
   async tryEvent(key, data, attempt) {

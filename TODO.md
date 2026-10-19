@@ -26,6 +26,8 @@ up to date at the end of every milestone.
       actions `arm`, `disarm`; "Test the connection"; fr/en. Tested against
       an in-memory module only (AES and checksum checked against
       satel-integra's own test vectors).
+- [x] **Review fixes** (2026-10-19, xhigh review of 82f488d: 1 blocking, 2
+      important, 12 minor): see "Decisions after the review" below.
 - [ ] **Milestone 2 - real panel**: run against a real INTEGRA with an
       ETHM-1 and an ETHM-1 Plus (with and without a key); capture real
       frames (anonymised) as fixtures; fix what differs (see below).
@@ -54,7 +56,7 @@ up to date at the end of every milestone.
 - A wrong integration key: silence (assumed), garbage or a closed socket?
 - What a busy ETHM-1 Plus with a key sends ("Busy!" in clear, or bytes).
 - The order of the lists on an arming (armed, mode, exit time): the app
-  waits 250 ms before it decides on the transitions.
+  gathers the partition lists in a sliding window (375 ms, at most 1 s).
 
 ## Decisions
 
@@ -92,9 +94,9 @@ up to date at the end of every milestone.
   in mode 3 / 2 / 1, armed (0x0A or 0x09: away), exit time (arming), else
   disarmed. Text feature in the configured language, no history; the scene
   triggers carry the frozen codes (`armed_away`, `armed_stay`).
-- **Transitions**: the module reports one list per frame; the app waits 250
-  ms after a report before it computes the transitions and publishes, so an
-  arming fires one `armed` event. No event for the first status after a
+- **Transitions**: the module reports one list per frame; the app gathers
+  the partition lists in a sliding window (M1 below) before it computes the
+  transitions, so an arming fires one `armed` event. No event for the first status after a
   start; `disarmed` is not sent for an exit time cancelled.
 - **Commands**: buttons (`button`/`push`, value 1 only, strictly), never a
   switch or a binary. Each command reads its lists from the panel first
@@ -112,10 +114,11 @@ up to date at the end of every milestone.
 - **User code**: optional (states need none), 4 to 16 digits, sent only in
   command frames, logged by label only. A 0xEF 0x01 / 0x03 answer (code not
   found, user does not exist) stops every command: saved in
-  `/data/satel-state.json` with the address only (never the code nor a hash
+  `/data/satel-state.json` with its date only (never the code nor a hash
   of it: a 4-digit code is brute-forced from any hash); lifted by a new code
-  in the configuration or by "Test the connection" (which never sends the
-  code itself). An ambiguous result never sets the stop. 0x02 (no right),
+  in the configuration or by the "Allow a new try of the code" action (which
+  sends nothing). A late or ambiguous 0x01 / 0x03 sets it too (I1 below).
+  0x02 (no right),
   0x11 / 0x12 (cannot arm) are plain refusals.
 - **Ambiguous results**: there is no request id in this protocol. After a
   command (0x7F..0x89) timed out, a 0xEF answer within 10 s may be its late
@@ -137,3 +140,56 @@ up to date at the end of every milestone.
   no end-to-end test in a container; the store validator
   (`npx github:GladysAssistant/integration-store .`) cannot be run from the
   agent session; never run against a real panel.
+
+## Decisions after the review (2026-10-19)
+
+- **B1 - no undefined in a scene event**: the SDK refuses an event whose
+  variable is `undefined` (the event is lost). `publisher.sceneEvent` turns
+  every `undefined` into `null`, for all events: `alarm_triggered` without a
+  known zone (no zone listed, a zone not listed, fire or panic from a
+  keypad) carries `zone: null`.
+- **I1 - late refusals of the code**: the client emits `result` for every
+  0xEF that answers no request (nothing in flight, or a read in flight: a
+  read never takes 0x01 / 0x03, nor any result while the line is
+  uncertain). The app keeps in memory the code of the last command frame
+  written (`onWrite`) and sets the persisted stop (logged, status) on a
+  late 0x01 / 0x03 when a frame with the current code left within
+  answerBy + 10 s. An `ambiguous` error with 0x01 / 0x03 in `send()` sets
+  it too.
+- **I2 - absolute deadlines**: the client gets `answerBy` (asked + 4.5 s for
+  a command, readBy for a fresh read) and computes the wait at the write:
+  `max(200, answerBy - now)`. A write delayed by a slow read ahead still
+  answers before Gladys' 5 s.
+- **M1 - sliding window**: only the partition lists are gathered: the
+  transitions wait until no partition list came for 1.5 x settleMs (375 ms),
+  at most 4 x settleMs (1 s) after the first one. Zones, outputs and status
+  are published at once (unless a partition change is being gathered).
+- **M2 - uncertain line**: a count of the results still to come (a command
+  timed out: +1; an ambiguous result: one consumed, one more to come; a
+  result answering nothing: -1), within a 10 s window renewed by each.
+- **M3 - one command at a time, refused at once**: a command asked while
+  another is handled is refused immediately ("another command is in
+  progress", nothing sent), instead of waiting and coming too late.
+- **M4 - malformed frames**: counted; the first one of a period is logged,
+  the others summed up in one line per minute; 50 in a row without a good
+  frame cut the connection.
+- **M5**: a 0xEF of another length than 1 byte is `unexpected`: "sent,
+  without confirmation".
+- **M6**: the short reads before a command (`short`) never count in the
+  three timeouts that drop the link.
+- **M7**: `configUpdated` sets the new configuration first (an option
+  switched off applies at once), then lifts the stop or restarts.
+- **M8**: the status update after a refused code is not awaited before the
+  ack of the command.
+- **M9**: offline, only the link state (`online` = 0) is published, never
+  the last lists seen.
+- **M10 - texts**: the user code travels in clear without an integration
+  key (field and docs); arming with people inside may raise a false alarm
+  and a call of the monitoring company (option and docs); AES keeps the
+  exchanges confidential but does not prevent a replay (field and docs).
+- **M11**: the code stop belongs to the integration (`{ at }` only), not to
+  host:port: a new address of the module keeps it; any stop found, even
+  malformed, is kept.
+- **M12**: a dedicated action "Allow a new try of the code"
+  (`allow_code_retry`) lifts the stop and sends nothing; "Test the
+  connection" no longer lifts it.

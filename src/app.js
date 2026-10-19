@@ -64,6 +64,9 @@ export class SatelApp {
     now = Date.now,
     timers = globalThis,
     store = fileStore(),
+    // The partition lists of one change come in several frames: the
+    // transitions wait until no partition list came for 1.5 x settleMs, at
+    // most 4 x settleMs after the first one (375 ms and 1 s by default).
     settleMs = 250,
   }) {
     this.gladys = gladys;
@@ -91,6 +94,12 @@ export class SatelApp {
     this.started = false;
     this.sweeper = undefined;
     this.flushTimer = undefined;
+    this.partitionTimer = undefined;
+    this.partitionSince = undefined;
+    this.modelPlace = undefined;
+    /** { code, at }: the last command frame written with a user code (memory only). */
+    this.sentWithCode = undefined;
+    this.pendingCommands = 0;
     this.commands = Promise.resolve();
     this.starting = Promise.resolve();
     // Every model change is applied when the client emits it, in the order of
@@ -110,8 +119,10 @@ export class SatelApp {
     });
     this.client.on('list', ({ cmd, set }) => {
       this.model.lists.set(cmd, set);
-      this.noteChange();
+      this.noteChange(PARTITION_LISTS.includes(cmd));
     });
+    // A result that answers no request (late, after its command timed out).
+    this.client.on('result', ({ code }) => this.lateResult(code));
     this.client.on('status', (status) => {
       this.model.status = status;
       this.noteChange();
@@ -168,10 +179,11 @@ export class SatelApp {
   async startNow(raw = {}) {
     this.stop();
     const next = normalizeConfig(raw);
-    if (placeKey(next) !== placeKey(this.config)) {
+    if (placeKey(next) !== this.modelPlace) {
       // Another panel, maybe: what we knew no longer holds.
       this.model = emptyModel();
       this.seen.clear();
+      this.modelPlace = placeKey(next);
     }
     this.config = next;
     this.key = sessionKey(next);
@@ -221,10 +233,11 @@ export class SatelApp {
       this.timers.clearInterval(this.sweeper);
       this.sweeper = undefined;
     }
-    if (this.flushTimer) {
-      this.timers.clearTimeout(this.flushTimer);
-      this.flushTimer = undefined;
+    for (const name of ['flushTimer', 'partitionTimer']) {
+      if (this[name]) this.timers.clearTimeout(this[name]);
+      this[name] = undefined;
     }
+    this.partitionSince = undefined;
     for (const timer of this.readBacks) this.timers.clearTimeout(timer);
     this.readBacks.clear();
   }
@@ -267,12 +280,13 @@ export class SatelApp {
    */
   async configUpdated(raw = {}) {
     const next = normalizeConfig(raw);
+    // First of all: an option switched off applies to the commands at once.
+    this.config = next;
     if (next.code !== this.code) {
       this.code = next.code;
       await this.liftCodeStop();
     }
     if (sessionKey(next) !== this.key) return this.start(raw);
-    this.config = next;
     await this.publishDevices();
     await this.publishStates();
     if (this.online) await this.setStatus(true, this.connectedMessage());
@@ -287,8 +301,38 @@ export class SatelApp {
     this.logger.info('Satel: the stop on the refused user code is lifted');
   }
 
+  /** The stop belongs to the integration (its user code), whatever the address. */
   codeStopped() {
-    return Boolean(this.memory?.codeStop && this.memory.codeStop.place === placeKey(this.config));
+    return Boolean(this.memory?.codeStop);
+  }
+
+  /**
+   * The panel refused the user code (an answer, or a late result of a
+   * command written with the current code): no command until the code
+   * changes or "Allow a new try of the code" is clicked. Persisted.
+   */
+  async stopOnCode(why) {
+    const memory = await this.loadMemory();
+    const already = Boolean(memory.codeStop);
+    memory.codeStop = { at: this.now() };
+    if (!already) {
+      this.logger.error(`Satel: the panel refused the user code (${why}): commands stopped`);
+    }
+    await this.saveMemory();
+    // Not awaited: the ack of the command never waits for Gladys' status.
+    if (this.online) this.setStatus(true, this.connectedMessage());
+  }
+
+  /** A late result: a refused code counts if a frame with the current code just left. */
+  lateResult(code) {
+    if (!isCodeRefusal(code)) return undefined;
+    const sent = this.sentWithCode;
+    const recent =
+      sent &&
+      sent.code === this.config.code &&
+      this.now() - sent.at <= TIMINGS.answerBy + TIMINGS.uncertain;
+    if (!recent) return undefined;
+    return this.guard(() => this.stopOnCode('late answer'));
   }
 
   async setStatus(connected, message) {
@@ -356,12 +400,31 @@ export class SatelApp {
    * publication and the transitions wait settleMs so that they see the
    * whole change, once.
    */
-  noteChange() {
-    if (this.flushTimer) return;
+  noteChange(partition = false) {
+    if (partition) {
+      // A sliding window over the partition lists, capped.
+      const now = this.now();
+      if (this.partitionSince === undefined) this.partitionSince = now;
+      if (this.partitionTimer) this.timers.clearTimeout(this.partitionTimer);
+      const wait = Math.min(this.settleMs * 1.5, this.partitionSince + this.settleMs * 4 - now);
+      this.partitionTimer = this.timers.setTimeout(
+        () => {
+          this.partitionTimer = undefined;
+          this.partitionSince = undefined;
+          this.guard(() => this.flushChanges());
+        },
+        Math.max(0, wait),
+      );
+      return;
+    }
+    // Zones, outputs, status: at once, unless a partition change is being
+    // gathered (its flush, within 1 s, publishes everything).
+    if (this.flushTimer || this.partitionTimer) return;
     this.flushTimer = this.timers.setTimeout(() => {
       this.flushTimer = undefined;
+      if (this.partitionTimer) return;
       this.guard(() => this.flushChanges());
-    }, this.settleMs);
+    }, 0);
   }
 
   async flushChanges() {
@@ -510,9 +573,21 @@ export class SatelApp {
 
   // --- Commands --------------------------------------------------------------
 
-  /** One command at a time; a failed one never blocks the next. */
+  /**
+   * One command at a time; a failed one never blocks the next. A command
+   * asked while another one is being handled is refused at once (nothing
+   * sent): waiting behind it would spend its own 5 s (a disarm behind a slow
+   * arming would come too late anyway).
+   */
   serial(fn) {
-    const run = this.commands.then(fn, fn);
+    if (this.pendingCommands > 0) {
+      this.logger.warn('Command REFUSED: another command is in progress');
+      return Promise.reject(this.refused(T.commandBusy));
+    }
+    this.pendingCommands += 1;
+    const run = this.commands.then(fn, fn).finally(() => {
+      this.pendingCommands -= 1;
+    });
     this.commands = run.catch(() => undefined);
     return run;
   }
@@ -598,7 +673,11 @@ export class SatelApp {
       for (const cmd of cmds) {
         const left = readBy - this.now();
         if (left < 100) throw new SatelError('too late', 'late');
-        lists.set(cmd, await this.client.readList(cmd, { sendBy: readBy, timeout: left }));
+        // Absolute deadline, counted from the write; a short read is no sign of a dead link.
+        lists.set(
+          cmd,
+          await this.client.readList(cmd, { sendBy: readBy, answerBy: readBy, short: true }),
+        );
       }
       return lists;
     } catch (err) {
@@ -639,7 +718,12 @@ export class SatelApp {
     const code = this.config.code;
     const request = run(code, {
       sendBy: asked + TIMINGS.sendBy,
-      timeout: Math.max(500, asked + TIMINGS.answerBy - this.now()),
+      // Absolute: the client waits from the write up to it, whatever was ahead in the queue.
+      answerBy: asked + TIMINGS.answerBy,
+      // The code of this frame, kept in memory: a late refusal of it stops the commands.
+      onWrite: () => {
+        this.sentWithCode = { code, at: this.now() };
+      },
       // …and once more by the client, right before the socket write.
       check: () => {
         try {
@@ -662,6 +746,10 @@ export class SatelApp {
         this.scheduleReadBack(readBack);
         throw await this.panelRefusal(what, err.code);
       }
+      if (err instanceof SatelError && err.kind === 'ambiguous' && isCodeRefusal(err.code)) {
+        // This frame or the one before (both with this code) was refused.
+        await this.stopOnCode('ambiguous answer');
+      }
       this.logger.warn(`Command sent, NOT confirmed (${label}): ${err.message}`);
       onSent();
       this.scheduleReadBack(readBack);
@@ -677,13 +765,8 @@ export class SatelApp {
     const label = word(what, 'en');
     const name = word(what, this.language);
     if (isCodeRefusal(code)) {
-      this.logger.error(
-        `Command REFUSED by the panel (${label}): user code refused, commands stopped`,
-      );
-      const memory = await this.loadMemory();
-      memory.codeStop = { place: placeKey(this.config), at: this.now() };
-      await this.saveMemory();
-      if (this.online) await this.setStatus(true, this.connectedMessage());
+      this.logger.error(`Command REFUSED by the panel (${label}): user code refused`);
+      await this.stopOnCode('refused');
       return this.error(fill(T.codeRefused, name));
     }
     this.logger.warn(`Command REFUSED by the panel (${label}): ${resultName(code)}`);
@@ -821,7 +904,6 @@ export class SatelApp {
   async testConnection() {
     const problem = this.configProblem();
     if (problem) throw this.error(problem);
-    await this.liftCodeStop();
     if (!this.client.connected && !this.client.busy) {
       await this.setStatus(false, T.connecting);
       this.client.start();
@@ -836,5 +918,16 @@ export class SatelApp {
     }
     await this.setStatus(true, this.connectedMessage());
     return this.connectedMessage();
+  }
+
+  /**
+   * "Allow a new try of the code": the user's explicit go for the next
+   * command to send the code again (nothing is sent now).
+   */
+  async allowCodeRetry() {
+    if (!this.codeStopped()) return T.codeNotStopped;
+    await this.liftCodeStop();
+    if (this.online) await this.setStatus(true, this.connectedMessage());
+    return T.codeRetryAllowed;
   }
 }

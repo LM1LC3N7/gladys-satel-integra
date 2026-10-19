@@ -79,13 +79,19 @@ connexion n'est ouverte (sinon il attend celle en cours : le module n'accepte
 qu'un client) et indique le modèle, l'état des partitions et le nombre de
 zones et de sorties. Il n'envoie pas le code utilisateur.
 
+Le bouton **Autoriser un nouvel essai du code** lève l'arrêt posé après un
+code utilisateur refusé (voir « Sécurité ») : la prochaine commande enverra
+de nouveau le code, une fois. Il n'envoie rien lui-même.
+
 ## Ce qui circule sur le réseau
 
 - **ETHM-1, ou ETHM-1 Plus sans clé d'intégration : tout circule en clair**
   sur votre réseau local, y compris le code utilisateur à chaque commande.
   Tout appareil de votre réseau qui écoute le trafic peut le lire.
-- **ETHM-1 Plus avec une clé d'intégration** : les échanges sont protégés
-  par AES avec cette clé (la méthode de satel-integra). Mettez la même clé
+- **ETHM-1 Plus avec une clé d'intégration** : les échanges restent
+  confidentiels grâce à AES avec cette clé (la méthode de satel-integra).
+  AES n'empêche pas le rejeu : une trame enregistrée sur votre réseau peut
+  être renvoyée telle quelle au module. Mettez la même clé
   des deux côtés ; si elles diffèrent, le module ne répond jamais et
   l'intégration vous le signale.
 - Protégez votre réseau (Wi-Fi invité séparé pour les appareils dont vous
@@ -95,7 +101,9 @@ zones et de sorties. Il n'envoie pas le code utilisateur.
 ## Sécurité
 
 - **Armer** est permis par défaut (option « Autoriser l'armement depuis
-  Gladys »), avec le code utilisateur.
+  Gladys »), avec le code utilisateur. Armer alors que quelqu'un est à
+  l'intérieur (une scène mal réglée, une erreur) peut déclencher une fausse
+  alarme, les sirènes et un appel de votre télésurveillance.
 - **Désarmer est désactivé par défaut.** Une fois l'option cochée, **tout
   utilisateur de Gladys, toute scène et l'application mobile Gladys peuvent
   désarmer, avec le code de la configuration, sans saisir aucun code**. Ne
@@ -109,7 +117,9 @@ zones et de sorties. Il n'envoie pas le code utilisateur.
 - Avant chaque commande, l'intégration **relit l'état sur la centrale** et
   décide sur cet état, jamais sur ce qu'elle a en mémoire (déjà dans l'état
   demandé : rien n'est envoyé ; armée dans un autre mode : refusé, désarmez
-  d'abord). Les commandes passent une par une.
+  d'abord). Les commandes passent une par une : une commande demandée pendant
+  qu'une autre est en cours est refusée tout de suite (« une autre commande
+  est en cours »), rien n'est envoyé.
 - Une commande qui ne peut pas partir dans les temps (centrale lente, état
   illisible) est refusée avec « rien n'a été envoyé ». Une commande partie
   sans réponse claire (pas de réponse, réponse ambiguë, coupure) est
@@ -121,9 +131,10 @@ zones et de sorties. Il n'envoie pas le code utilisateur.
   jamais d'elle-même**, même après un redémarrage (une INTEGRA peut
   déclencher une alarme ou bloquer les claviers après plusieurs codes faux).
   Les états continuent d'arriver. Changez le code dans la configuration, ou
-  cliquez sur « Tester la connexion » pour permettre un nouvel essai à la
-  prochaine commande. Le fichier `/data/satel-state.json` garde seulement
-  l'adresse concernée, jamais le code.
+  cliquez sur « Autoriser un nouvel essai du code ». Une réponse de refus
+  arrivée en retard (après « envoyée, sans confirmation ») arrête aussi les
+  commandes. Le fichier `/data/satel-state.json` garde seulement la date de
+  l'arrêt, jamais le code ; l'arrêt tient même si l'adresse du module change.
 - Chaque commande, envoyée ou refusée, est écrite dans les journaux de
   l'intégration, jamais les codes.
 

@@ -76,14 +76,20 @@ open (otherwise it waits for the one in progress: the module takes one
 client only) and tells the model, the state of the partitions and the number
 of zones and outputs. It does not send the user code.
 
+The **Allow a new try of the code** button lifts the stop set after a refused
+user code (see "Safety"): the next command sends the code again, once. It
+sends nothing itself.
+
 ## What travels on the network
 
 - **ETHM-1, or ETHM-1 Plus without an integration key: everything travels in
   clear text** on your local network, the user code of each command
   included. Any device of your network listening to the traffic can read
   it.
-- **ETHM-1 Plus with an integration key**: the exchanges are protected with
-  AES using that key (satel-integra's method). Set the same key on both
+- **ETHM-1 Plus with an integration key**: the exchanges stay confidential
+  with AES using that key (satel-integra's method). AES does not prevent a
+  replay: a frame recorded on your network can be sent again as is to the
+  module. Set the same key on both
   sides; when they differ, the module never answers and the integration
   tells you.
 - Protect your network (a separate guest Wi-Fi for the devices you are not
@@ -92,7 +98,9 @@ of zones and outputs. It does not send the user code.
 ## Safety
 
 - **Arming** is allowed by default (option "Allow arming from Gladys"), with
-  the user code.
+  the user code. Arming while someone is inside (a badly set scene, a
+  mistake) may raise a false alarm, the sirens and a call of your alarm
+  monitoring company.
 - **Disarming is off by default.** Once the option is checked, **every Gladys
   user, every scene and the Gladys mobile app can disarm, with the code of
   the configuration, without typing any code**. Allow it only if your Gladys
@@ -104,7 +112,9 @@ of zones and outputs. It does not send the user code.
 - Before each command, the integration **reads the state from the panel
   again** and decides on that state, never on what it has in memory (already
   in the state asked: nothing is sent; armed in another mode: refused,
-  disarm first). Commands go one at a time.
+  disarm first). Commands go one at a time: a command asked while another
+  one is in progress is refused at once ("another command is in progress"),
+  nothing is sent.
 - A command that cannot leave in time (slow panel, unreadable state) is
   refused with "nothing was sent". A command sent without a clear answer (no
   answer, an ambiguous answer, a cut) is reported "sent, without
@@ -114,9 +124,11 @@ of zones and outputs. It does not send the user code.
 - **When the panel refuses the user code, the integration never sends it
   again by itself**, even after a restart (an INTEGRA may raise an alarm or
   lock the keypads after several wrong codes). The states keep coming.
-  Change the code in the configuration, or click "Test the connection" to
-  allow one new try at the next command. The file `/data/satel-state.json`
-  keeps only the address concerned, never the code.
+  Change the code in the configuration, or click "Allow a new try of the
+  code". A refusal that comes late (after "sent, without confirmation")
+  stops the commands too. The file `/data/satel-state.json` keeps only the
+  date of the stop, never the code; the stop holds even if the address of
+  the module changes.
 - Every command, sent or refused, is written in the integration logs; the
   codes never are.
 

@@ -264,7 +264,7 @@ test('a refused user code stops the commands, across restarts, without the code 
   assert.equal(ack.success, false);
   assert.match(ack.error, /refused the user code/);
   assert.equal(ctx.panel.commands.length, 1);
-  assert.deepEqual(Object.keys(store.data.codeStop), ['place', 'at']);
+  assert.deepEqual(Object.keys(store.data.codeStop), ['at'], 'M11: no address, no code');
   assert.ok(!JSON.stringify(store.data).includes('9999'));
   // Never sent again by itself.
   const again = await ctx.press(ctx.partition(1), 'arm-away');
@@ -285,18 +285,33 @@ test('a refused user code stops the commands, across restarts, without the code 
   assert.equal(ok.success, true, ok.error);
 });
 
-test('"Test the connection" lifts the code stop (one new try) and tells the panel', async (t) => {
-  const store = memoryStore({ codeStop: { place: '192.0.2.30:7094', at: 1 } });
+test('M12: "Test the connection" keeps the code stop; "Allow a new try of the code" lifts it', async (t) => {
+  const store = memoryStore({ codeStop: { at: 1 } });
   const ctx = await setup(t, { store });
   await up(ctx);
   assert.match((await ctx.press(ctx.partition(1), 'arm-away')).error, /before/);
   const result = await ctx.gladys.fake.action('test_connection');
   assert.equal(result.success, true, result.error);
   assert.match(JSON.stringify(result), /INTEGRA 64 Plus/);
+  assert.deepEqual(store.data?.codeStop ?? { at: 1 }, { at: 1 }, 'the test never lifts it');
+  assert.match((await ctx.press(ctx.partition(1), 'arm-away')).error, /before/);
+  const retry = await ctx.gladys.fake.action('allow_code_retry');
+  assert.equal(retry.success, true, retry.error);
+  assert.match(JSON.stringify(retry), /next command will send the user code again/);
   assert.equal(store.data.codeStop, null);
+  assert.equal(ctx.panel.commands.length, 0, 'the button itself sends nothing');
   assert.equal((await ctx.press(ctx.partition(1), 'arm-away')).success, true);
 });
 
+test('M11: the code stop belongs to the integration: a new address keeps it', async (t) => {
+  const store = memoryStore({ codeStop: { place: 'old.lan:7094', at: 1 } });
+  const ctx = await setup(t, { store });
+  await up(ctx);
+  await ctx.app.configUpdated({ ...BASE, host: '192.0.2.31' });
+  await until(() => ctx.app.online);
+  assert.match((await ctx.press(ctx.partition(1), 'arm-away')).error, /before/);
+  assert.equal(ctx.panel.commands.length, 0);
+});
 test('without a user code: monitoring only, commands refused with a clear message', async (t) => {
   const ctx = await setup(t, { config: { user_code: '' } });
   await up(ctx);
@@ -432,4 +447,199 @@ test('the module drops the link: offline, states unreachable, one connection aga
   assert.equal(ctx.state(ctx.panelIds.feature('online')), 0);
   assert.ok(ctx.gladys.fake.transports.some((e) => e.transport === 'unreachable'));
   assert.equal(ctx.panel.maxOpen, 1);
+});
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('B1: alarm_triggered is sent with zone null when the zone is not known', async (t) => {
+  for (const [config, zoneAlarm] of [
+    [{ zones: '' }, []],
+    [{ zones: '1' }, [9]],
+  ]) {
+    const ctx = await setup(t, { config });
+    await up(ctx);
+    for (const z of zoneAlarm) ctx.panel.state.zoneAlarm.add(z);
+    ctx.panel.push(0x02);
+    await change(ctx, 'alarm', 1, true);
+    assert.deepEqual(ctx.events().at(-1), {
+      key: 'alarm_triggered',
+      data: { partition: '1', zone: null, fire: false },
+    });
+    ctx.app.stop({ final: true });
+  }
+  // Fire (or panic) from a keypad: no zone either.
+  const ctx = await setup(t);
+  await up(ctx);
+  await change(ctx, 'fire', 2, true);
+  assert.deepEqual(ctx.events().at(-1), {
+    key: 'alarm_triggered',
+    data: { partition: '2', zone: null, fire: true },
+  });
+});
+
+test('I1 (s1): a refusal of the code that comes after the timeout stops the commands', async (t) => {
+  const ctx = await setup(t, { config: { user_code: '9999' } });
+  await up(ctx);
+  ctx.panel.gate = (cmd) => (cmd >= 0x80 && cmd <= 0x89 ? sleep(4_800) : undefined);
+  const first = await ctx.press(ctx.partition(1), 'arm-away');
+  assert.match(first.error, /without confirmation/);
+  await sleep(600); // the late 0x01 arrives, nothing in flight
+  await ctx.app.chain;
+  assert.deepEqual(Object.keys(ctx.store.data?.codeStop ?? {}), ['at']);
+  const second = await ctx.press(ctx.partition(1), 'arm-away');
+  assert.match(second.error, /refused this user code before.*nothing was sent/);
+  assert.equal(ctx.panel.commands.length, 1, 'one frame with the refused code, never two');
+  assert.ok(ctx.logger.lines.some((l) => /refused the user code \(late answer\)/.test(l)));
+});
+
+test('I1: an ambiguous refusal of the code stops the commands too', async (t) => {
+  const ctx = await setup(t, { config: { user_code: '9999' } });
+  await up(ctx);
+  // The module never answers the first command; a late 0x01 then lands on
+  // the second one (ambiguous).
+  let n = 0;
+  ctx.panel.hold = (cmd) => cmd >= 0x80 && cmd <= 0x89 && (n += 1) === 1;
+  assert.match((await ctx.press(ctx.partition(1), 'arm-away')).error, /without confirmation/);
+  const second = await ctx.press(ctx.partition(2), 'arm-away');
+  assert.match(second.error, /without confirmation/);
+  await ctx.app.chain;
+  assert.ok(ctx.store.data?.codeStop, 'stopped');
+  assert.match((await ctx.press(ctx.partition(2), 'arm-away')).error, /before/);
+});
+
+test('I2 (s2): a write delayed by a slow read ahead still answers before 5 s', async (t) => {
+  const ctx = await setup(t);
+  await up(ctx);
+  let afterLastFreshRead = false;
+  let delayed = false;
+  let pressedAt = 0;
+  ctx.panel.hold = (cmd) => cmd === 0x80;
+  ctx.panel.gate = (cmd) => {
+    if (pressedAt && cmd === 0x14 && !afterLastFreshRead) {
+      afterLastFreshRead = true;
+      return undefined;
+    }
+    if (afterLastFreshRead && !delayed && cmd !== 0x80) {
+      delayed = true;
+      return sleep(2_600);
+    }
+    return undefined;
+  };
+  const readBack = ctx.app.client
+    .readLists([0x09, 0x0a, 0x2a, 0x0b, 0x0c, 0x0e, 0x0f, 0x10, 0x13, 0x14])
+    .catch((e) => e);
+  pressedAt = Date.now();
+  const ack = await ctx.press(ctx.partition(2), 'arm-away');
+  const elapsed = Date.now() - pressedAt;
+  assert.ok(elapsed < 4_800, `ack after ${elapsed} ms`);
+  assert.equal(ack.success, false);
+  await readBack;
+});
+
+test('M1 (s3): the partition lists of one change, 300 ms apart, give one event', async (t) => {
+  const ctx = await setup(t, { config: {} });
+  ctx.app.settleMs = 250;
+  await up(ctx);
+  const s = ctx.panel.state;
+  const flush = async () => {
+    await sleep(1_100);
+    await ctx.app.chain;
+  };
+  s.armed.add(1);
+  s.armedSuppressed.add(1);
+  ctx.panel.push(0x0a);
+  ctx.panel.push(0x09);
+  await sleep(300);
+  s.mode1.add(1);
+  ctx.panel.push(0x2a);
+  await flush();
+  assert.deepEqual(
+    ctx.events().map((e) => [e.key, e.data.mode]),
+    [['armed', 'armed_stay']],
+  );
+  const before = ctx.events().length;
+  s.mode1.delete(1);
+  ctx.panel.push(0x2a);
+  await sleep(300);
+  s.armed.delete(1);
+  s.armedSuppressed.delete(1);
+  ctx.panel.push(0x0a);
+  ctx.panel.push(0x09);
+  await flush();
+  assert.deepEqual(
+    ctx
+      .events()
+      .slice(before)
+      .map((e) => e.key),
+    ['disarmed'],
+  );
+});
+
+test('M1: the window is capped: reports every 300 ms flush within about 1 s', async (t) => {
+  const ctx = await setup(t);
+  ctx.app.settleMs = 250;
+  await up(ctx);
+  const started = Date.now();
+  ctx.panel.set('alarm', 1, true);
+  const reports = (async () => {
+    for (let i = 0; i < 6; i += 1) {
+      await sleep(300);
+      ctx.panel.push(0x0a);
+    }
+  })();
+  await until(() => ctx.events().some((e) => e.key === 'alarm_triggered'));
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1_500, `alarm after ${elapsed} ms although reports keep coming`);
+  await reports;
+});
+
+test('M3 (s10): a command asked while another one is handled is refused at once', async (t) => {
+  const ctx = await setup(t, { config: { allow_disarm: true } });
+  await up(ctx);
+  ctx.panel.hold = (cmd) => cmd === 0x80;
+  const arming = ctx.press(ctx.partition(1), 'arm-away');
+  await sleep(200);
+  const t0 = Date.now();
+  const d = await ctx.press(ctx.partition(1), 'disarm');
+  assert.ok(Date.now() - t0 < 500, 'refused at once');
+  assert.match(d.error, /Another command is in progress.*nothing was sent/);
+  await arming;
+  assert.deepEqual(
+    ctx.panel.commands.map((c) => c.cmd),
+    [0x80],
+  );
+});
+
+test('M7: a new configuration applies to the commands before anything is awaited', async (t) => {
+  const ctx = await setup(t);
+  await up(ctx);
+  const pending = ctx.app.configUpdated({ ...BASE, allow_arm: false, user_code: '5678' });
+  assert.equal(ctx.app.config.allowArm, false, 'at once');
+  await pending;
+  assert.match((await ctx.press(ctx.partition(1), 'arm-away')).error, /disabled/);
+});
+
+test('M8: the ack of a refused code never waits for the Gladys status', async (t) => {
+  const ctx = await setup(t, { config: { user_code: '9999' } });
+  await up(ctx);
+  ctx.gladys.setConnectionStatus = () => new Promise(() => {}); // Gladys never answers
+  const t0 = Date.now();
+  const ack = await ctx.press(ctx.partition(1), 'arm-away');
+  assert.match(ack.error, /refused the user code/);
+  assert.ok(Date.now() - t0 < 2_000);
+});
+
+test('M9: offline, only the link state is sent', async (t) => {
+  const ctx = await setup(t);
+  await up(ctx);
+  const before = ctx.gladys.fake.states.length;
+  ctx.panel.drop();
+  await until(() => ctx.gladys.fake.connectionStatus.connected === false);
+  await ctx.app.chain;
+  const sent = ctx.gladys.fake.states.slice(before);
+  assert.ok(sent.length > 0);
+  assert.ok(
+    sent.every((s) => s.device_feature_external_id === ctx.panelIds.feature('online')),
+    'nothing but the link',
+  );
 });

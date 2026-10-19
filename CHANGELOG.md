@@ -51,4 +51,32 @@ the notes of the version's GitHub Release.
 - Docs and configuration: without an integration key the traffic, user code
   included, travels in clear text on the local network.
 
+### Fixed
+
+- `alarm_triggered` is no longer lost when the zone in alarm is not known:
+  it carries `zone: null` (every undefined event value is sent as null).
+- A refusal of the user code that comes late (after the command timed out,
+  or on the next command) now stops the commands too.
+- The answer of a command is awaited up to an absolute deadline counted
+  from its write, so the ack always comes before Gladys' 5 s.
+- The partition lists of one change are gathered in a sliding window (up
+  to 1 s): one `armed` event per arming, no false `armed` on a disarm.
+- After an ambiguous result the line stays uncertain until the pending
+  answers came or 10 s passed.
+- A command asked while another is handled is refused at once.
+- Malformed frames are logged once per minute in a summary; 50 in a row
+  cut the connection. A result of a wrong length is "sent, without
+  confirmation". Short reads never drop the link.
+- A new configuration applies at once; offline, only the link state is
+  published; the ack of a refused code never waits for Gladys' status.
+
+### Changed
+
+- The stop on a refused user code belongs to the integration, not to the
+  address of the module, and is lifted by a dedicated "Allow a new try of
+  the code" button (no longer by "Test the connection").
+- Docs and configuration: user code in clear without an integration key;
+  AES keeps the exchanges confidential, without replay protection; arming
+  with people inside may raise a false alarm and a monitoring call.
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-satel-integra/commits/main

@@ -7,6 +7,7 @@
 /** Manifest keys: frozen, users store them in scenes and dashboards. */
 export const ACTIONS = {
   TEST_CONNECTION: 'test_connection',
+  ALLOW_CODE_RETRY: 'allow_code_retry',
 };
 
 export const SCENE_ACTIONS = {
@@ -62,6 +63,8 @@ export const LIMITS = {
   silentSessions: 2,
   /** Bytes waiting in the socket write buffer before the session is cut (a flood). */
   maxPendingWrite: 64 * 1024,
+  /** Malformed frames or PDUs in a row, without a good frame between, before the link is cut. */
+  maxRejects: 50,
   /** Bytes kept from what the module sends before the first request ("Busy!"). */
   maxGreeting: 64,
 };
@@ -91,6 +94,8 @@ export const TIMINGS = {
   sessionGap: 5_000,
   /** A late answer may still come this long after a command timed out. */
   uncertain: 10_000,
+  /** At most one summary line of the rejected frames per this period. */
+  rejectLog: 60_000,
   /**
    * Gladys waits 5 s for a set_value ack. A command's fresh state must be
    * read by readBy, the command sent by sendBy after it was asked (else

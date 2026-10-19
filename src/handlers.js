@@ -14,8 +14,9 @@ export function registerHandlers(gladys, app, logger) {
   // The buttons (arm away, arm stay, disarm, output on / off).
   gladys.onSetValue((device, feature, value) => app.setValue(device, feature, value));
 
-  // Configuration screen button.
+  // Configuration screen buttons.
   gladys.onAction(ACTIONS.TEST_CONNECTION, () => app.testConnection());
+  gladys.onAction(ACTIONS.ALLOW_CODE_RETRY, () => app.allowCodeRetry());
 
   // Scene actions.
   // A missing partition or mode is refused, never guessed: Gladys sends the

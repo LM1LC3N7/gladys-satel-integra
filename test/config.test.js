@@ -66,9 +66,11 @@ test('the user code is not part of the session: changing it never reconnects', (
 
 test('the persisted state is repaired, and holds no code', async () => {
   assert.deepEqual(normalizeMemory({ codeStop: { place: 'h:7094', at: 5, code: '1' } }), {
-    codeStop: { place: 'h:7094', at: 5 },
+    codeStop: { at: 5 },
   });
-  assert.deepEqual(normalizeMemory({ codeStop: { place: '' } }), { codeStop: null });
+  // A stop in doubt is kept (M11: tied to the integration, not to an address).
+  assert.deepEqual(normalizeMemory({ codeStop: { place: '' } }), { codeStop: { at: 0 } });
+  assert.deepEqual(normalizeMemory({ codeStop: null }), { codeStop: null });
   assert.deepEqual(normalizeMemory('junk'), { codeStop: null });
   assert.equal(await fileStore('/nonexistent/dir/state.json').load(), null);
 });

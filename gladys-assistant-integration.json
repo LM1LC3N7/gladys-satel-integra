@@ -82,8 +82,8 @@
         "fr": "Clé d'intégration (ETHM-1 Plus)"
       },
       "description": {
-        "en": "Only if an integration key is set on an ETHM-1 Plus module (12 characters at most): the exchanges are then protected with AES. Leave empty otherwise: with an ETHM-1, or an ETHM-1 Plus without a key, everything travels in clear text on your network, the user code of the commands included. Kept by Gladys in its database, never shown again, used only with the module.",
-        "fr": "Seulement si une clé d'intégration est réglée sur un module ETHM-1 Plus (12 caractères au plus) : les échanges sont alors protégés par AES. Sinon laissez vide : avec un ETHM-1, ou un ETHM-1 Plus sans clé, tout circule en clair sur votre réseau, y compris le code utilisateur des commandes. Gardée par Gladys dans sa base, jamais réaffichée, utilisée seulement avec le module."
+        "en": "Only if an integration key is set on an ETHM-1 Plus module (12 characters at most): the exchanges are then kept confidential with AES (no protection against a frame recorded and replayed on your network). Leave empty otherwise: with an ETHM-1, or an ETHM-1 Plus without a key, everything travels in clear text on your network, the user code of the commands included. Kept by Gladys in its database, never shown again, used only with the module.",
+        "fr": "Seulement si une clé d'intégration est réglée sur un module ETHM-1 Plus (12 caractères au plus) : les échanges restent alors confidentiels grâce à AES (sans protection contre une trame enregistrée puis rejouée sur votre réseau). Sinon laissez vide : avec un ETHM-1, ou un ETHM-1 Plus sans clé, tout circule en clair sur votre réseau, y compris le code utilisateur des commandes. Gardée par Gladys dans sa base, jamais réaffichée, utilisée seulement avec le module."
       },
       "required": false
     },
@@ -95,8 +95,8 @@
         "fr": "Code utilisateur"
       },
       "description": {
-        "en": "Optional: the code of an INTEGRA user (4 to 16 digits, prefix included), needed only for the commands (arming, disarming, outputs); the states need none. Create a user with only the partitions and rights Gladys needs. A code refused by the panel is never sent again by itself. Kept by Gladys in its database, never shown again, sent only to the panel, never in the logs.",
-        "fr": "Facultatif : le code d'un utilisateur INTEGRA (4 à 16 chiffres, préfixe compris), nécessaire seulement aux commandes (armement, désarmement, sorties) ; les états n'en ont pas besoin. Créez un utilisateur avec seulement les partitions et droits utiles à Gladys. Un code refusé par la centrale n'est jamais renvoyé de lui-même. Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la centrale, jamais dans les journaux."
+        "en": "Optional: the code of an INTEGRA user (4 to 16 digits, prefix included), needed only for the commands (arming, disarming, outputs); the states need none. Create a user with only the partitions and rights Gladys needs. Without an integration key it travels in clear text on your network at each command. A code refused by the panel is never sent again by itself (\"Allow a new try of the code\" button). Kept by Gladys in its database, never shown again, sent only to the panel, never in the logs.",
+        "fr": "Facultatif : le code d'un utilisateur INTEGRA (4 à 16 chiffres, préfixe compris), nécessaire seulement aux commandes (armement, désarmement, sorties) ; les états n'en ont pas besoin. Créez un utilisateur avec seulement les partitions et droits utiles à Gladys. Sans clé d'intégration, il circule en clair sur votre réseau à chaque commande. Un code refusé par la centrale n'est jamais renvoyé de lui-même (bouton « Autoriser un nouvel essai du code »). Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la centrale, jamais dans les journaux."
       },
       "required": false
     },
@@ -208,6 +208,10 @@
         "en": "Allow arming from Gladys",
         "fr": "Autoriser l'armement depuis Gladys"
       },
+      "description": {
+        "en": "Arming while someone is inside (a scene, a mistake) may raise a false alarm, sirens and a call of your alarm monitoring company.",
+        "fr": "Armer alors que quelqu'un est à l'intérieur (une scène, une erreur) peut déclencher une fausse alarme, les sirènes et un appel de votre télésurveillance."
+      },
       "required": false,
       "default": true
     },
@@ -278,6 +282,14 @@
         "fr": "Tester la connexion"
       },
       "timeout_seconds": 30
+    },
+    {
+      "key": "allow_code_retry",
+      "label": {
+        "en": "Allow a new try of the code",
+        "fr": "Autoriser un nouvel essai du code"
+      },
+      "timeout_seconds": 10
     }
   ],
   "scene_triggers": [

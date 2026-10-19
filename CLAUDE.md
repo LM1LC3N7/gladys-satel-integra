@@ -54,7 +54,8 @@ the outputs stay off by default (separate options), arming has its own;
 commands are push buttons, never switches; a command decides on the lists
 read from the panel just before it, one at a time; a command that may have
 left is never reported "not sent"; a refused user code is never sent again
-by itself; the user code and the integration key are never logged; one TCP
+by itself (only a new code or the "Allow a new try of the code" action lift
+the stop); the user code and the integration key are never logged; one TCP
 connection only (the ETHM-1 takes one client).
 
 ## Rules

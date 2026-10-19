@@ -110,8 +110,134 @@ test('a result after a command timed out is ambiguous, never a plain success', a
   held = false;
   const second = await ctx.client.arm(1, 0, '1234').catch((err) => err);
   assert.equal(second.kind, 'ambiguous', 'the result may answer the first one');
-  const third = await ctx.client.arm(1, 0, '1234');
-  assert.equal(third, 0xff, 'in step again');
+  // M2: the second command's own answer is still to come: still uncertain.
+  const third = await ctx.client.arm(1, 0, '1234').catch((err) => err);
+  assert.equal(third.kind, 'ambiguous', 'still uncertain after an ambiguous result');
+  await advance(t, TIMINGS.uncertain + 500);
+  const fourth = await ctx.client.arm(1, 0, '1234');
+  assert.equal(fourth, 0xff, 'in step again once the window is over');
+});
+
+test('M2/I1: a late result with nothing in flight is reported, and puts the line in step', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  const results = [];
+  ctx.client.on('result', (r) => results.push(r.code));
+  let release;
+  ctx.panel.gate = (cmd) => (cmd === 0x80 ? new Promise((r) => (release = r)) : undefined);
+  const first = ctx.client.arm(1, 0, '9999').catch((err) => err);
+  await advance(t, TIMINGS.requestTimeout);
+  assert.equal((await first).kind, 'timeout');
+  release();
+  await settle();
+  assert.deepEqual(results, [0x01], 'the late refusal of the code is reported');
+  ctx.panel.gate = () => undefined;
+  assert.equal(await ctx.client.arm(1, 0, '1234'), 0xff, 'in step again');
+});
+
+test('I1: a read never takes a refused-code result as its answer', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  const results = [];
+  ctx.client.on('result', (r) => results.push(r.code));
+  let answer;
+  ctx.panel.gate = (cmd) => (cmd === 0x0a ? new Promise((r) => (answer = r)) : undefined);
+  const read = ctx.client.readList(0x0a);
+  await settle();
+  ctx.panel.current.send(0xef, [0x01]); // a late refusal lands while the read waits
+  await settle();
+  answer();
+  await settle();
+  assert.ok((await read) instanceof Set, 'the read got its own answer');
+  assert.deepEqual(results, [0x01]);
+});
+
+test('M5: a result of another length than 1 byte is "sent, without confirmation"', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  ctx.panel.hold = (cmd) => cmd === 0x80;
+  const pending = ctx.client.arm(1, 0, '1234').catch((err) => err);
+  await settle();
+  ctx.panel.current.send(0xef, [0x01, 0x00]);
+  await settle();
+  const err = await pending;
+  assert.deepEqual([err.kind, err.sent], ['unexpected', true]);
+});
+
+test('M6: short reads before a command never drop the link by their timeouts', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  ctx.panel.hold = (cmd) => cmd === 0x0a;
+  for (let i = 0; i < 4; i += 1) {
+    const read = ctx.client
+      .readList(0x0a, { answerBy: Date.now() + 300, short: true })
+      .catch((e) => e);
+    await advance(t, 400);
+    assert.equal((await read).kind, 'timeout');
+  }
+  assert.equal(ctx.downs.length, 0, 'still connected after 4 short timeouts');
+  assert.equal(ctx.client.connected, true);
+});
+
+test('I2: the answer of a command is awaited up to its absolute deadline, from the write', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  let release;
+  ctx.panel.gate = (cmd) => (cmd === 0x0b ? new Promise((r) => (release = r)) : undefined);
+  ctx.panel.hold = (cmd) => cmd === 0x80;
+  const started = Date.now();
+  const slow = ctx.client.readList(0x0b);
+  const command = ctx.client
+    .arm(1, 0, '1234', { sendBy: started + 3_500, answerBy: started + 4_500 })
+    .catch((err) => err);
+  await advance(t, 3_000);
+  release(); // the read ahead answers at +3 s: the command is written then
+  let settledAt;
+  command.then(() => (settledAt = Date.now()));
+  await slow;
+  await advance(t, 2_000);
+  const err = await command;
+  assert.equal(err.kind, 'timeout');
+  assert.ok(settledAt - started <= 4_600, `answered at +${settledAt - started} ms`);
+});
+
+test('M4: a flood of malformed frames: a few log lines, then the link is cut', async (t) => {
+  const ctx = setup(t);
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  const before = ctx.logger.lines.length;
+  const bytes = Buffer.alloc(300_000);
+  for (let i = 0; i < bytes.length; i += 3) bytes.set([0xfe, 0xfe, 0x00], i);
+  ctx.panel.current.emit('data', bytes);
+  await settle();
+  const lines = ctx.logger.lines.slice(before).filter((l) => /dropped/.test(l));
+  assert.ok(lines.length <= 3, `${lines.length} log lines`);
+  assert.equal(ctx.downs.length, 1);
+  assert.match(ctx.downs[0].reason, /malformed/);
+});
+
+test('M4: AES, a stream of empty PDUs: the same bound', async (t) => {
+  const ctx = setup(t, { key: 'Klucz123' }, { key: 'Klucz123' });
+  ctx.client.start();
+  await settle();
+  await advance(t, TIMINGS.greeting);
+  assert.equal(ctx.client.connected, true);
+  const before = ctx.logger.lines.length;
+  ctx.panel.current.emit('data', Buffer.alloc(200_000, 0));
+  await settle();
+  assert.ok(ctx.logger.lines.length - before <= 4);
+  assert.equal(ctx.downs.length, 1);
 });
 
 test('a request is never written after its deadline', async (t) => {

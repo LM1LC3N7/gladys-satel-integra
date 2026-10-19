@@ -251,6 +251,8 @@ export function buildStates(gladys, config, model, { online }) {
   const lists = model.lists ?? new Map();
   const panel = ids.panel(gladys);
   push(panel, 'online', flag(online));
+  // Offline, the lists are the last ones seen, not the panel's: only the link is told.
+  if (!online) return states;
   if (model.status) {
     push(panel, 'trouble', flag(model.status.troubles));
     push(panel, 'service-mode', flag(model.status.service));

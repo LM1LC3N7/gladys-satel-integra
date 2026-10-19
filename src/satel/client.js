@@ -50,6 +50,7 @@ import {
   READ,
   RESULT,
   WRITE,
+  isCodeRefusal,
   isSuccess,
   isWideList,
   listLengths,
@@ -113,6 +114,55 @@ export class SatelClient extends EventEmitter {
     this.greetingTimer = undefined;
     this.ticker = undefined;
     this.uncertainUntil = 0;
+    this.pendingLate = 0;
+    /** Rejected frames / PDUs: counted, logged once per period (a hostile peer can send many). */
+    this.drops = { count: 0, reasons: {}, loggedAt: undefined };
+    this.dropRun = 0;
+  }
+
+  /**
+   * A frame or PDU rejected. The first one of a period is logged, the others
+   * are counted and summed up once per period; too many in a row without a
+   * good frame cut the connection.
+   */
+  rejected(generation, why) {
+    if (generation !== this.generation) return;
+    const drops = this.drops;
+    drops.count += 1;
+    drops.reasons[why] = (drops.reasons[why] ?? 0) + 1;
+    this.dropRun += 1;
+    if (drops.loggedAt === undefined) {
+      this.logger.warn(`Satel: ${why}, dropped`);
+      drops.loggedAt = this.now();
+      drops.count = 0;
+      drops.reasons = {};
+    } else {
+      this.logDrops();
+    }
+    if (this.dropRun >= LIMITS.maxRejects) {
+      this.logDrops(true);
+      this.lost(generation, 'too many malformed frames from the module');
+    }
+  }
+
+  /** The summary of the rejected frames, at most once per period (or now). */
+  logDrops(now = false) {
+    const drops = this.drops;
+    if (drops.count === 0 || drops.loggedAt === undefined) return;
+    if (!now && this.now() - drops.loggedAt < TIMINGS.rejectLog) return;
+    const reasons = Object.entries(drops.reasons)
+      .map(([why, n]) => `${n} ${why}`)
+      .join(', ');
+    this.logger.warn(`Satel: ${drops.count} frame(s) dropped (${reasons})`);
+    drops.count = 0;
+    drops.reasons = {};
+    drops.loggedAt = this.now();
+  }
+
+  /** A late result (of a command that timed out, or got an ambiguous one) may still come. */
+  get uncertain() {
+    if (this.pendingLate > 0 && this.now() >= this.uncertainUntil) this.pendingLate = 0;
+    return this.pendingLate > 0;
   }
 
   configure({ host, port, key = '', partitions = [], zones = [], outputs = [] }) {
@@ -215,13 +265,17 @@ export class SatelClient extends EventEmitter {
     this.status = undefined;
     this.timeouts = 0;
     this.uncertainUntil = 0;
+    this.pendingLate = 0;
+    this.dropRun = 0;
     this.greeting = [];
     this.phase = 'connecting';
     this.frames = new FrameReader({
       onFrame: (frame) => {
-        if (generation === this.generation) this.frame(generation, frame);
+        if (generation !== this.generation) return;
+        this.dropRun = 0;
+        this.frame(generation, frame);
       },
-      onDrop: (why) => this.logger.warn(`Satel: ${why}, frame dropped`),
+      onDrop: (why) => this.rejected(generation, why),
     });
     this.session = this.encrypted
       ? new EncryptedSession(this.options.key, { idS: nextIdS++ })
@@ -240,7 +294,7 @@ export class SatelClient extends EventEmitter {
             }
             this.frames.push(inner);
           },
-          onError: (why) => this.logger.warn(`Satel: ${why}`),
+          onError: (why) => this.rejected(generation, why),
         })
       : undefined;
     this.logger.debug(`Connecting to the Satel module at ${host}:${port}`);
@@ -420,6 +474,7 @@ export class SatelClient extends EventEmitter {
   tick(generation) {
     if (generation !== this.generation || !this.socket) return;
     const now = this.now();
+    this.logDrops();
     if (now - this.lastReceived > TIMINGS.watchdog) {
       this.logger.warn('Satel: nothing received for too long, reconnecting');
       this.lost(generation, 'no answer from the module');
@@ -437,8 +492,8 @@ export class SatelClient extends EventEmitter {
     const lengths = listLengths(cmd);
     if (lengths) {
       if (!lengths.includes(data.length)) {
-        this.logger.warn(`Satel: list ${hex(cmd)} of ${data.length} bytes ignored`);
-        this.answer(cmd, undefined, true);
+        this.rejected(generation, `list ${hex(cmd)} of a wrong length`);
+        if (generation === this.generation) this.answer(cmd, undefined, true);
         return;
       }
       const set = decodeMask(data);
@@ -457,41 +512,54 @@ export class SatelClient extends EventEmitter {
   /** An answer for the request in flight, if it is the one it waits for. */
   answer(cmd, data, malformed = false) {
     const entry = this.inflight;
-    if (!entry) {
-      if (cmd === RESULT) this.uncertainUntil = 0; // the late result came: in step again
-      return;
+    const code = cmd === RESULT && data?.length === 1 ? data[0] : -1;
+    if (cmd === RESULT && entry?.expect !== RESULT) {
+      // A result with no command in flight, or while a read is: a read never
+      // gets a refused user code, and while a late result may still come,
+      // any result is that late one. Reported, never lost.
+      if (!entry || isCodeRefusal(code) || this.uncertain) {
+        this.late(code);
+        return;
+      }
     }
+    if (!entry) return;
     if (cmd !== entry.expect && cmd !== RESULT) return;
     this.timers.clearTimeout(entry.timer);
     this.inflight = undefined;
-    this.timeouts = 0;
+    if (!entry.short) this.timeouts = 0;
     if (malformed) {
       entry.reject(
         new SatelError(`Unexpected answer to ${entry.label}`, 'unexpected', { sent: true }),
       );
+    } else if (cmd === RESULT && code < 0) {
+      // A result of another length than 1 byte: its meaning is unknown.
+      entry.reject(
+        new SatelError(`Malformed result to ${entry.label}`, 'unexpected', { sent: true }),
+      );
+    } else if (cmd === RESULT && entry.expect === RESULT && this.uncertain) {
+      // It may answer an earlier command; this one's own answer is still to
+      // come: the line stays uncertain (one pending late result, renewed).
+      this.uncertainUntil = this.now() + TIMINGS.uncertain;
+      entry.reject(
+        new SatelError(`Ambiguous result to ${entry.label}`, 'ambiguous', { sent: true, code }),
+      );
+    } else if (cmd === RESULT && entry.expect === RESULT && isSuccess(code)) {
+      entry.resolve(code);
     } else if (cmd === RESULT) {
-      const code = data.length === 1 ? data[0] : -1;
-      const late = this.now() < this.uncertainUntil;
-      if (entry.expect === RESULT && late) {
-        this.uncertainUntil = 0;
-        entry.reject(
-          new SatelError(`Ambiguous result to ${entry.label}`, 'ambiguous', { sent: true, code }),
-        );
-      } else if (entry.expect === RESULT && isSuccess(code)) {
-        entry.resolve(code);
-      } else {
-        entry.reject(
-          new SatelError(
-            `The module answered ${code < 0 ? 'a malformed result' : resultName(code)}`,
-            'panel',
-            { sent: true, code },
-          ),
-        );
-      }
+      entry.reject(
+        new SatelError(`The module answered ${resultName(code)}`, 'panel', { sent: true, code }),
+      );
     } else {
       entry.resolve(data);
     }
     this.pump();
+  }
+
+  /** A result that answers no request in flight: one late result fewer to wait for. */
+  late(code) {
+    if (this.pendingLate > 0) this.pendingLate -= 1;
+    this.logger.debug(`Satel: late result ${code < 0 ? '(malformed)' : resultName(code)}`);
+    this.emit('result', { code });
   }
 
   // --- Requests ---------------------------------------------------------------
@@ -506,7 +574,16 @@ export class SatelClient extends EventEmitter {
   request(
     cmd,
     data = [],
-    { timeout = TIMINGS.requestTimeout, label = hex(cmd), internal = false, sendBy, check } = {},
+    {
+      timeout = TIMINGS.requestTimeout,
+      label = hex(cmd),
+      internal = false,
+      sendBy,
+      answerBy,
+      check,
+      onWrite,
+      short = false,
+    } = {},
   ) {
     return new Promise((resolve, reject) => {
       if (!this.socket || (!internal && !this.ready)) {
@@ -514,7 +591,20 @@ export class SatelClient extends EventEmitter {
         return;
       }
       const expect = cmd >= 0x7f && cmd <= 0x89 ? RESULT : cmd;
-      const entry = { cmd, data, expect, label, timeout, check, resolve, reject, written: false };
+      const entry = {
+        cmd,
+        data,
+        expect,
+        label,
+        timeout,
+        answerBy,
+        check,
+        onWrite,
+        short,
+        resolve,
+        reject,
+        written: false,
+      };
       if (sendBy !== undefined) {
         const wait = sendBy - this.now();
         if (wait <= 0) {
@@ -559,6 +649,14 @@ export class SatelClient extends EventEmitter {
     this.logger.debug(`Satel <- ${entry.label}`);
     entry.written = true;
     this.lastSent = this.now();
+    // The answer is awaited from the write, up to its absolute deadline.
+    const wait =
+      entry.answerBy === undefined ? entry.timeout : Math.max(200, entry.answerBy - this.now());
+    try {
+      entry.onWrite?.();
+    } catch {
+      // A bookkeeping callback never stops the write.
+    }
     try {
       this.socket.write(bytes);
     } catch (err) {
@@ -569,16 +667,20 @@ export class SatelClient extends EventEmitter {
     entry.timer = this.timers.setTimeout(() => {
       if (this.inflight !== entry) return;
       this.inflight = undefined;
-      this.timeouts += 1;
+      // A short read before a command is not a sign of a dead link.
+      if (!entry.short) this.timeouts += 1;
       // A late result may still come: for a while, a result is not trusted.
-      if (entry.expect === RESULT) this.uncertainUntil = this.now() + TIMINGS.uncertain;
+      if (entry.expect === RESULT) {
+        this.pendingLate += 1;
+        this.uncertainUntil = this.now() + TIMINGS.uncertain;
+      }
       entry.reject(new SatelError(`No answer to ${entry.label}`, 'timeout', { sent: true }));
       if (this.timeouts >= LIMITS.maxTimeouts) {
         this.lost(generation, 'no answer from the module');
         return;
       }
       this.pump();
-    }, entry.timeout);
+    }, wait);
   }
 
   /** A module (or a peer) flooding us faster than the socket drains: cut. */

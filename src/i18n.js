@@ -87,8 +87,8 @@ export const T = {
       `Connecté à la centrale ${model}${modeList(partitions, 'fr')}, ${zones} zone(s), ${outputs} sortie(s).`,
   },
   codeStopped: {
-    en: ' The panel refused the user code: commands stopped until the code is changed or "Test the connection" is clicked.',
-    fr: ' La centrale a refusé le code utilisateur : commandes arrêtées jusqu’à un changement du code ou un clic sur « Tester la connexion ».',
+    en: ' The panel refused the user code: commands stopped until the code is changed or "Allow a new try of the code" is clicked.',
+    fr: ' La centrale a refusé le code utilisateur : commandes arrêtées jusqu’à un changement du code ou un clic sur « Autoriser un nouvel essai du code ».',
   },
   unreachable: {
     en: (reason, seconds) => `Satel module unreachable (${reason}), next try in ${seconds} s.`,
@@ -120,8 +120,8 @@ export const T = {
     fr: `Le code utilisateur de la configuration doit compter 4 à 16 chiffres${nothing.fr}`,
   },
   codeRefusedBefore: {
-    en: `The panel refused this user code before: change it in the configuration, or click "Test the connection" to allow one new try${nothing.en}`,
-    fr: `La centrale a déjà refusé ce code utilisateur : changez-le dans la configuration, ou cliquez sur « Tester la connexion » pour permettre un nouvel essai${nothing.fr}`,
+    en: `The panel refused this user code before: change it in the configuration, or click "Allow a new try of the code"${nothing.en}`,
+    fr: `La centrale a déjà refusé ce code utilisateur : changez-le dans la configuration, ou cliquez sur « Autoriser un nouvel essai du code »${nothing.fr}`,
   },
   armRefused: {
     en: `Arming from Gladys is disabled in the configuration${nothing.en}`,
@@ -161,9 +161,9 @@ export const T = {
   },
   codeRefused: {
     en: (what) =>
-      `The panel refused the user code (${what}). Commands are stopped until the code is changed or "Test the connection" is clicked.`,
+      `The panel refused the user code (${what}). Commands are stopped until the code is changed or "Allow a new try of the code" is clicked.`,
     fr: (what) =>
-      `La centrale a refusé le code utilisateur (${what}). Les commandes sont arrêtées jusqu'à un changement du code ou un clic sur « Tester la connexion ».`,
+      `La centrale a refusé le code utilisateur (${what}). Les commandes sont arrêtées jusqu'à un changement du code ou un clic sur « Autoriser un nouvel essai du code ».`,
   },
   noAccess: {
     en: (what) => `The panel refused the command: this user has no right for it (${what}).`,
@@ -185,6 +185,18 @@ export const T = {
       `Sent to the panel (${what}), without confirmation in time: the state is read again in 2 s.`,
     fr: (what) =>
       `Envoyé à la centrale (${what}), sans confirmation dans les temps : l'état est relu dans 2 s.`,
+  },
+  commandBusy: {
+    en: `Another command is in progress, try again in a moment${nothing.en}`,
+    fr: `Une autre commande est en cours, réessayez dans un instant${nothing.fr}`,
+  },
+  codeNotStopped: {
+    en: 'The user code is not stopped: nothing to allow.',
+    fr: "Le code utilisateur n'est pas arrêté : rien à autoriser.",
+  },
+  codeRetryAllowed: {
+    en: 'The next command will send the user code again (once). Nothing was sent now.',
+    fr: "La prochaine commande enverra de nouveau le code utilisateur (une fois). Rien n'a été envoyé maintenant.",
   },
   stillConnecting: {
     en: 'The connection to the module is still starting; try again in a moment.',
