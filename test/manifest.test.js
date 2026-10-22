@@ -54,7 +54,7 @@ test('the store basics', () => {
   assert.ok(manifest.name.length >= 3 && manifest.name.length <= 30);
   assert.equal(manifest.gladys_version, '>=5.1.0', 'scene triggers and actions need Gladys 5.1');
   assert.equal(manifest.docker_image, `ghcr.io/lm1lc3n7/gladys-satel-integra:${manifest.version}`);
-  assert.equal(manifest.version, '0.1.0');
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.equal(manifest.version, JSON.parse(read('package.json')).version);
   const lock = JSON.parse(read('package-lock.json'));
   assert.equal(lock.version, manifest.version);
