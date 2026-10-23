@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-23
+
 ## [0.1.1] - 2026-10-19
 
 ### Added
@@ -84,5 +86,6 @@ the notes of the version's GitHub Release.
   AES keeps the exchanges confidential, without replay protection; arming
   with people inside may raise a false alarm and a monitoring call.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-satel-integra/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-satel-integra/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/LM1LC3N7/gladys-satel-integra/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-satel-integra/releases/tag/v0.1.1

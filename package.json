@@ -1,6 +1,6 @@
 {
   "name": "gladys-satel-integra",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Gladys Assistant external integration for Satel INTEGRA alarm panels through the ETHM-1 / ETHM-1 Plus module, locally over TCP. Unofficial, not affiliated with SATEL.",
   "type": "module",
